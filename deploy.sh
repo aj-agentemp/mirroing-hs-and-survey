@@ -1,57 +1,70 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  deploy.sh  — Deploy mirroing-hs-and-survey to Ubuntu via password SSH
-#  Usage (run from your local machine inside this project folder):
-#    chmod +x deploy.sh
+#  deploy.sh  — Deploy mirroing-hs-and-survey to 35.153.179.34
+#
+#  First-time setup:
+#    ./deploy.sh --setup
+#
+#  Subsequent deploys (files + restart only):
 #    ./deploy.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
 # ── Config ────────────────────────────────────────────────────────────────────
+SERVER_IP="35.153.179.34"
 REMOTE_USER="ubuntu"
 REMOTE_DIR="/home/ubuntu/mirroing-hs-and-survey"
 DOMAIN="mir.agentemp.com"
 APP_PORT="9000"
 PM2_NAME="mirror-survey"
+SETUP_MODE=false
+
+# ── Flags ─────────────────────────────────────────────────────────────────────
+if [[ "$1" == "--setup" ]]; then
+  SETUP_MODE=true
+fi
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
-SERVER_IP="35.153.179.34"
 read -rsp "  SSH password for ${REMOTE_USER}@${SERVER_IP}: " SSH_PASS
 echo ""
 
-# ── Check sshpass is available ─────────────────────────────────────────────────
+# ── Check sshpass ─────────────────────────────────────────────────────────────
 if ! command -v sshpass &> /dev/null; then
   echo ""
   echo "  ❌  sshpass is not installed."
   echo "      macOS:  brew install hudochenkov/sshpass/sshpass"
-  echo "      Ubuntu: sudo apt-get install -y sshpass"
   exit 1
 fi
 
-# Helpers
+# ── Helpers ───────────────────────────────────────────────────────────────────
 ssh_run() {
   sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no \
     "${REMOTE_USER}@${SERVER_IP}" "$@"
 }
-
-scp_run() {
-  sshpass -p "$SSH_PASS" scp -o StrictHostKeyChecking=no -r "$@"
-}
-
 rsync_run() {
-  sshpass -p "$SSH_PASS" rsync -avz --delete \
+  sshpass -p "$SSH_PASS" rsync -az --delete \
     -e "ssh -o StrictHostKeyChecking=no" "$@"
 }
 
 echo ""
-echo "═══════════════════════════════════════════════════════"
-echo "  Deploying to ${REMOTE_USER}@${SERVER_IP}  →  ${DOMAIN}"
-echo "═══════════════════════════════════════════════════════"
+if $SETUP_MODE; then
+  echo "═══════════════════════════════════════════════════════"
+  echo "  🔧  FIRST-TIME SETUP  →  ${REMOTE_USER}@${SERVER_IP}"
+  echo "═══════════════════════════════════════════════════════"
+else
+  echo "═══════════════════════════════════════════════════════"
+  echo "  🚀  REDEPLOY  →  ${REMOTE_USER}@${SERVER_IP}"
+  echo "═══════════════════════════════════════════════════════"
+fi
 
-# ── Step 1: Install deps on server (idempotent) ───────────────────────────────
-echo ""
-echo "▶  1/6  Installing Node.js 20, Nginx, PM2 (if not already installed)…"
-ssh_run bash <<'REMOTE'
+# ════════════════════════════════════════════════════════
+#  SETUP STEPS (first time only — ./deploy.sh --setup)
+# ════════════════════════════════════════════════════════
+if $SETUP_MODE; then
+
+  echo ""
+  echo "▶  [setup]  Installing Node.js 20, Nginx, PM2…"
+  ssh_run bash <<'REMOTE'
 set -e
 if ! command -v node &>/dev/null; then
   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -64,55 +77,11 @@ if ! command -v pm2 &>/dev/null; then
   sudo npm install -g pm2
 fi
 REMOTE
-echo "   ✓ done"
+  echo "   ✓ done"
 
-# ── Step 2: Sync project files (excludes node_modules + .git) ────────────────
-echo ""
-echo "▶  2/6  Uploading project files…"
-ssh_run "mkdir -p ${REMOTE_DIR}"
-rsync_run \
-  --exclude='node_modules/' \
-  --exclude='.git/' \
-  ./ "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/"
-echo "   ✓ done"
-
-# ── Step 3: npm install on server ─────────────────────────────────────────────
-echo ""
-echo "▶  3/6  Installing npm dependencies on server…"
-ssh_run "cd ${REMOTE_DIR} && npm install --omit=dev"
-echo "   ✓ done"
-
-# ── Step 4: Copy .env to server ───────────────────────────────────────────────
-echo ""
-echo "▶  4/6  Copying .env to server…"
-if [ -f ".env" ]; then
-  sshpass -p "$SSH_PASS" scp -o StrictHostKeyChecking=no \
-    .env "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/.env"
-  echo "   ✓ .env copied"
-else
-  echo "   ⚠️  No local .env found — skipping (server will use existing .env if present)"
-fi
-
-# ── Step 5: Start / restart PM2 ───────────────────────────────────────────────
-echo ""
-echo "▶  5/6  Starting PM2 process…"
-ssh_run bash <<REMOTE
-cd ${REMOTE_DIR}
-if pm2 list | grep -q "${PM2_NAME}"; then
-  pm2 restart ${PM2_NAME}
-else
-  pm2 start server.js --name ${PM2_NAME}
-fi
-pm2 save
-# Enable PM2 to start on boot (ignore output — user may need to run the printed command)
-pm2 startup systemd -u ubuntu --hp /home/ubuntu 2>/dev/null || true
-REMOTE
-echo "   ✓ done"
-
-# ── Step 6: Nginx config ───────────────────────────────────────────────────────
-echo ""
-echo "▶  6/6  Configuring Nginx for ${DOMAIN}…"
-ssh_run bash <<REMOTE
+  echo ""
+  echo "▶  [setup]  Configuring Nginx for ${DOMAIN}…"
+  ssh_run bash <<REMOTE
 sudo tee /etc/nginx/sites-available/${DOMAIN} > /dev/null <<'NGINX'
 server {
     listen 80;
@@ -129,47 +98,78 @@ server {
     }
 }
 NGINX
-
 sudo ln -sf /etc/nginx/sites-available/${DOMAIN} \
             /etc/nginx/sites-enabled/${DOMAIN}
-
-# Remove default Nginx site if present
 sudo rm -f /etc/nginx/sites-enabled/default
-
 sudo nginx -t && sudo systemctl reload nginx
 REMOTE
-echo "   ✓ done"
+  echo "   ✓ done"
 
-# ── SSL (optional — requires DNS to be pointing already) ──────────────────────
-echo ""
-read -rp "  Install SSL cert with Certbot? (DNS must already point to this IP) [y/N]: " DO_SSL
-if [[ "$DO_SSL" =~ ^[Yy]$ ]]; then
-  ssh_run bash <<REMOTE
+  echo ""
+  read -rp "  Install SSL cert with Certbot? (DNS must point to ${SERVER_IP}) [y/N]: " DO_SSL
+  if [[ "$DO_SSL" =~ ^[Yy]$ ]]; then
+    ssh_run bash <<REMOTE
 if ! command -v certbot &>/dev/null; then
   sudo apt-get install -y certbot python3-certbot-nginx
 fi
 sudo certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos \
   -m admin@agentemp.com --redirect
 REMOTE
-  echo "   ✓ SSL installed"
+    echo "   ✓ SSL installed"
+  else
+    echo "   ↷ SSL skipped — run later:  sudo certbot --nginx -d ${DOMAIN}"
+  fi
+
+fi   # end SETUP_MODE
+
+# ════════════════════════════════════════════════════════
+#  DEPLOY STEPS (always run)
+# ════════════════════════════════════════════════════════
+
+echo ""
+echo "▶  1/3  Uploading files…"
+ssh_run "mkdir -p ${REMOTE_DIR}"
+rsync_run \
+  --exclude='node_modules/' \
+  --exclude='.git/' \
+  ./ "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/"
+echo "   ✓ done"
+
+echo ""
+echo "▶  2/3  Installing dependencies…"
+ssh_run "cd ${REMOTE_DIR} && npm install --omit=dev"
+echo "   ✓ done"
+
+echo ""
+echo "▶  3/3  Copying .env & restarting PM2…"
+if [ -f ".env" ]; then
+  sshpass -p "$SSH_PASS" scp -o StrictHostKeyChecking=no \
+    .env "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/.env"
+  echo "   ✓ .env copied"
 else
-  echo "   ↷ Skipped — run later: sudo certbot --nginx -d ${DOMAIN}"
+  echo "   ⚠️  No local .env found"
 fi
 
-# ── Summary ────────────────────────────────────────────────────────────────────
+ssh_run bash <<REMOTE
+cd ${REMOTE_DIR}
+if pm2 list | grep -q "${PM2_NAME}"; then
+  pm2 restart ${PM2_NAME}
+else
+  pm2 start server.js --name ${PM2_NAME}
+  pm2 save
+  pm2 startup systemd -u ubuntu --hp /home/ubuntu 2>/dev/null || true
+fi
+REMOTE
+echo "   ✓ done"
+
+# ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════"
-echo "  ✅  Deploy complete!"
+echo "  ✅  Done!"
 echo ""
-echo "  Health check:"
-PROTO="http"
-[[ "$DO_SSL" =~ ^[Yy]$ ]] && PROTO="https"
-echo "    curl ${PROTO}://${DOMAIN}/health"
-echo ""
-echo "  Server logs:"
-echo "    ssh ${REMOTE_USER}@${SERVER_IP}"
-echo "    pm2 logs ${PM2_NAME}"
-echo ""
-echo "  ⚠️  If .env was just created, edit it then run:"
-echo "    pm2 restart ${PM2_NAME}"
+echo "  Health:  curl http://${SERVER_IP}:${APP_PORT}/health"
+if $SETUP_MODE; then
+  echo "  Domain:  curl https://${DOMAIN}/health"
+fi
+echo "  Logs:    ssh ${REMOTE_USER}@${SERVER_IP} 'pm2 logs ${PM2_NAME}'"
 echo "═══════════════════════════════════════════════════════"

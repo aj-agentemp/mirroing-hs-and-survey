@@ -52,22 +52,29 @@ sudo apt-get install -y nginx
 > brew install hudochenkov/sshpass/sshpass
 > ```
 
-Run from inside the project folder:
+### First-time setup (installs Node, Nginx, PM2, configures subdomain + SSL)
 ```bash
 chmod +x deploy.sh
+./deploy.sh --setup
+```
+
+### Every deploy after that (fast — files + .env + PM2 restart only)
+```bash
 ./deploy.sh
 ```
 
-The script will ask for:
-- **SSH password** — your instance password (IP `35.153.179.34` is already set)
+Both commands will only ask for the **SSH password** (IP `35.153.179.34` is hardcoded).
 
-Then it automatically:
-1. Uploads all project files via rsync
-2. Runs `npm install` on the server
+`--setup` additionally:
+1. Installs Node.js 20, Nginx, PM2 on the server
+2. Writes the Nginx config for `mir.agentemp.com → localhost:9000`
+3. Optionally installs a free SSL cert via Certbot
+
+**Normal redeploy** only does:
+1. Rsyncs changed project files
+2. Runs `npm install --omit=dev`
 3. Copies your local `.env` to the server
-4. Starts the app with PM2 under the name `mirror-survey`
-5. Writes the Nginx config for `mir.agentemp.com → localhost:9000`
-6. Optionally installs a free SSL cert via Certbot
+4. Restarts the PM2 process `mirror-survey`
 
 ---
 
