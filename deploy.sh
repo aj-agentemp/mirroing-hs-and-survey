@@ -15,8 +15,8 @@ APP_PORT="9000"
 PM2_NAME="mirror-survey"
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
-read -rp "  Server IP or hostname: " SERVER_IP
-read -rsp "  SSH password: " SSH_PASS
+SERVER_IP="35.153.179.34"
+read -rsp "  SSH password for ${REMOTE_USER}@${SERVER_IP}: " SSH_PASS
 echo ""
 
 # ── Check sshpass is available ─────────────────────────────────────────────────

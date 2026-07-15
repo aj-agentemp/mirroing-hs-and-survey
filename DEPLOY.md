@@ -21,9 +21,8 @@ ping mir.agentemp.com
 
 ## Step 2 — SSH into the server
 
-AWS Ubuntu instances use password auth:
 ```bash
-ssh ubuntu@<YOUR_EC2_PUBLIC_IP>
+ssh ubuntu@35.153.179.34
 # enter your SSH password when prompted
 ```
 
@@ -60,8 +59,7 @@ chmod +x deploy.sh
 ```
 
 The script will ask for:
-- **Server IP** — your EC2 public IP
-- **SSH password** — your instance password
+- **SSH password** — your instance password (IP `35.153.179.34` is already set)
 
 Then it automatically:
 1. Uploads all project files via rsync
