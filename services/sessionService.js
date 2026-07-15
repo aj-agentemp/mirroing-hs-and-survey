@@ -18,6 +18,7 @@
  *   otp: {
  *     status:       'none' | 'pending' | 'valid' | 'invalid'
  *     attempts:     number
+ *     value:        string | null  (OTP entered by lead — read by other server)
  *   }
  *   planId:         string | null
  *   createdAt:      number  (epoch ms)
@@ -217,6 +218,24 @@ async function incrementOtpAttempts(sessionId) {
 }
 
 /**
+ * Save the OTP value entered by the lead into DynamoDB.
+ * Other server reads this from GET /session/:id, validates it on their side,
+ * then writes back the result via PUT /internal/otp-status.
+ */
+async function saveOtpValue(sessionId, otpValue) {
+  const ts = now();
+  await db.send(
+    new UpdateCommand({
+      TableName:                 TABLE(),
+      Key:                       { sessionId },
+      UpdateExpression:          'SET otp.#v = :value, updatedAt = :ts',
+      ExpressionAttributeNames:  { '#v': 'value' },
+      ExpressionAttributeValues: { ':value': otpValue, ':ts': ts },
+    }),
+  );
+}
+
+/**
  * Reset OTP status back to pending (lead re-entering OTP after invalid attempt).
  */
 async function resetOtpToPending(sessionId) {
@@ -251,6 +270,7 @@ module.exports = {
   markExited,
   markCompleted,
   updateOtpStatus,
+  saveOtpValue,
   incrementOtpAttempts,
   resetOtpToPending,
   isStale,

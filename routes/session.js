@@ -171,19 +171,17 @@ router.post('/otp-submit', async (req, res) => {
       });
     }
 
-    // Increment attempt counter & set status to pending
+    // Save OTP value, increment attempt counter & set status to pending.
+    // Other server reads the OTP from GET /session/:id, validates it on their
+    // side, then calls PUT /internal/otp-status to set valid/invalid.
+    // Client polls GET /session/:id/otp-status until status changes.
+    await sessionSvc.saveOtpValue(sessionId, otp);
     await sessionSvc.incrementOtpAttempts(sessionId);
     await sessionSvc.updateOtpStatus(sessionId, 'pending');
 
-    // Forward to other server (non-blocking — client polls for result)
-    otherSvc.submitOtp({ sessionId, otp })
-      .catch((err) => {
-        console.error(`[session/otp-submit] Failed to forward OTP to other server: ${err.message}`);
-      });
-
     return res.json({
       ok:       true,
-      message:  'OTP submitted, polling for result',
+      message:  'OTP saved, polling for result',
       attempts: attempts + 1,
     });
   } catch (err) {
