@@ -1,56 +1,37 @@
 # System Architecture
 
 ```mermaid
-flowchart LR
-    subgraph Survey["GHL Survey  (browser)"]
-        Lead["👤 Lead"]
-        Tracker["📜 Tracker Script"]
-    end
+flowchart TD
+    Survey["👤 GHL Survey\n(tracker script in browser)"]
+    Mirror["🖥️ Mirror Server\nmir.agentemp.com"]
+    DB[("🗄️ DynamoDB\nsurvey_sessions")]
+    Other["⚙️ Other Server\nautomation bot"]
 
-    subgraph Backend["Mirror Server  —  mir.agentemp.com"]
-        Mirror["🖥️ Express API"]
-        DB[("🗄️ DynamoDB")]
-    end
+    %% ── Survey → Mirror ──────────────────────────────────
+    Survey -->|"POST /api/session/init\n(when email is captured)"| Mirror
+    Survey -->|"POST /api/session/slide-data\n(on every slide change)"| Mirror
+    Survey -->|"POST /api/session/heartbeat\n(every 30 seconds)"| Mirror
+    Survey -->|"POST /api/session/exit\n(on tab close)"| Mirror
+    Survey -->|"POST /api/session/otp-submit\n(OTP entered in popup)"| Mirror
 
-    subgraph Automation["Other Server  (automation bot)"]
-        Other["⚙️ Bot"]
-    end
+    %% ── Mirror ↔ DB ──────────────────────────────────────
+    Mirror -->|"write — save session,\nslide fields, OTP status,\nheartbeat timestamp"| DB
+    DB -->|"read — get session\nby sessionId"| Mirror
 
-    Lead -- "fills fields &\nchanges slides" --> Tracker
+    %% ── Mirror → Other Server ────────────────────────────
+    Mirror -->|"POST /session-started\n(on session init — fire & forget)\n{ sessionId, email, phone }"| Other
+    Mirror -->|"POST /otp-verify\n(on OTP submit — fire & forget)\n{ sessionId, otp }"| Other
 
-    Tracker -- "session init\nslide data\nheartbeat\nexit\notp submit" --> Mirror
+    %% ── Other Server → Mirror ────────────────────────────
+    Other -->|"GET /api/session/:id\n(poll for field data continuously)"| Mirror
+    Other -->|"POST /internal/otp-trigger\n(show OTP popup on survey)\n{ sessionId }"| Mirror
+    Other -->|"PUT /internal/otp-status\n(set OTP result)\n{ sessionId, status: valid|invalid }"| Mirror
 
-    Mirror -- "read / write\nsession data" --> DB
-
-    Mirror -- "① session started\n② otp forward" --> Other
-
-    Other -- "③ otp trigger\n④ otp result\n⑤ poll session data" --> Mirror
-
-    style Survey fill:#fefce8,stroke:#ca8a04
-    style Backend fill:#f0fdf4,stroke:#16a34a
-    style Automation fill:#faf5ff,stroke:#7c3aed
+    %% ── Styles ───────────────────────────────────────────
+    style Survey fill:#fef9c3,stroke:#ca8a04,color:#000
+    style Mirror fill:#dcfce7,stroke:#16a34a,color:#000
+    style DB     fill:#fee2e2,stroke:#dc2626,color:#000
+    style Other  fill:#ede9fe,stroke:#7c3aed,color:#000
 ```
 
-### How it works
-
-**Survey side**
-1. Lead fills the survey — tracker script monitors field changes
-2. When email is captured → `session/init` → session created in DB
-3. On every slide change → `session/slide-data` → fields saved to DB
-4. Every 30s → `session/heartbeat` → keeps session alive
-5. On tab close → `session/exit` → marks session exited
-
-**Mirror Server**
-- Stores everything in DynamoDB (`survey_sessions` table)
-- On session init → calls Other Server *(fire & forget)*
-- On OTP submit → forwards OTP to Other Server *(fire & forget)*
-
-**Other Server**
-- Polls `GET /session/:id` to read the latest field data in real time
-- Calls `POST /internal/otp-trigger` when it wants to show the OTP popup
-- Calls `PUT /internal/otp-status` to set OTP result (valid / invalid)
-
-**Session ends when:**
-- Lead reaches last slide or plan is saved → `status: completed`
-- Lead closes the tab → `status: exited`
-- No heartbeat for 20 minutes → auto-marked `exited`
+> **Note:** Other Server does **not** talk to DynamoDB directly — it reads all data through `GET /api/session/:id` on the Mirror Server.
