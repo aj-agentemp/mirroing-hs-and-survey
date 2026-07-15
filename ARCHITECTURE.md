@@ -7,31 +7,19 @@ flowchart TD
     DB[("🗄️ DynamoDB\nsurvey_sessions")]
     Other["⚙️ Other Server\nautomation bot"]
 
-    %% ── Survey → Mirror ──────────────────────────────────
-    Survey -->|"POST /api/session/init\n(when email is captured)"| Mirror
-    Survey -->|"POST /api/session/slide-data\n(on every slide change)"| Mirror
-    Survey -->|"POST /api/session/heartbeat\n(every 30 seconds)"| Mirror
-    Survey -->|"POST /api/session/exit\n(on tab close)"| Mirror
-    Survey -->|"POST /api/session/otp-submit\n(OTP entered in popup)"| Mirror
+    Survey -->|"POST /session/init\nPOST /session/slide-data\nPOST /session/heartbeat\nPOST /session/exit\nPOST /session/otp-submit"| Mirror
 
-    %% ── Mirror ↔ DB ──────────────────────────────────────
-    Mirror -->|"write — save session,\nslide fields, OTP status,\nheartbeat timestamp"| DB
-    DB -->|"read — get session\nby sessionId"| Mirror
+    Mirror -->|"write — session, slide fields, OTP status, heartbeat"| DB
+    DB -->|"read — session by sessionId"| Mirror
 
-    %% ── Mirror → Other Server ────────────────────────────
-    Mirror -->|"POST /session-started\n(on session init — fire & forget)\n{ sessionId, email, phone }"| Other
-    Mirror -->|"POST /otp-verify\n(on OTP submit — fire & forget)\n{ sessionId, otp }"| Other
+    Mirror -->|"POST /session-started  ➜  on session init\nPOST /otp-verify  ➜  on OTP submit\n(fire & forget)"| Other
 
-    %% ── Other Server → Mirror ────────────────────────────
-    Other -->|"GET /api/session/:id\n(poll for field data continuously)"| Mirror
-    Other -->|"POST /internal/otp-trigger\n(show OTP popup on survey)\n{ sessionId }"| Mirror
-    Other -->|"PUT /internal/otp-status\n(set OTP result)\n{ sessionId, status: valid|invalid }"| Mirror
+    Other -->|"POST /internal/otp-trigger  ➜  show OTP popup\nPUT  /internal/otp-status  ➜  set OTP result"| Mirror
 
-    %% ── Styles ───────────────────────────────────────────
+    Other -->|"read session data\nGET /session/:id  (via Mirror API)"| DB
+
     style Survey fill:#fef9c3,stroke:#ca8a04,color:#000
     style Mirror fill:#dcfce7,stroke:#16a34a,color:#000
     style DB     fill:#fee2e2,stroke:#dc2626,color:#000
     style Other  fill:#ede9fe,stroke:#7c3aed,color:#000
 ```
-
-> **Note:** Other Server does **not** talk to DynamoDB directly — it reads all data through `GET /api/session/:id` on the Mirror Server.
