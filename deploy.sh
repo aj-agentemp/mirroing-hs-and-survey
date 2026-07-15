@@ -1,92 +1,71 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  deploy.sh  — Deploy mirroing-hs-and-survey to 35.153.179.34
+#  deploy.sh  —  Deploy mirroing-hs-and-survey to production
 #
-#  First-time setup:
-#    ./deploy.sh --setup
-#
-#  Subsequent deploys (files + restart only):
+#  Regular deploy (upload + install + restart):
 #    ./deploy.sh
+#
+#  First-time server setup (Node, Nginx, PM2, optional SSL):
+#    ./deploy.sh --setup
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────────
 SERVER_IP="35.153.179.34"
 REMOTE_USER="ubuntu"
 REMOTE_DIR="/home/ubuntu/mirroing-hs-and-survey"
 DOMAIN="mir.agentemp.com"
 APP_PORT="9000"
 PM2_NAME="mirror-survey"
+
+# ── Parse args ───────────────────────────────────────────────────────────────
 SETUP_MODE=false
+[[ "$1" == "--setup" ]] && SETUP_MODE=true
 
-# ── Flags ─────────────────────────────────────────────────────────────────────
-if [[ "$1" == "--setup" ]]; then
-  SETUP_MODE=true
-fi
-
-# ── Prompt ────────────────────────────────────────────────────────────────────
-read -rsp "  SSH password for ${REMOTE_USER}@${SERVER_IP}: " SSH_PASS
-echo ""
-
-# ── Check sshpass ─────────────────────────────────────────────────────────────
-if ! command -v sshpass &> /dev/null; then
-  echo ""
-  echo "  ❌  sshpass is not installed."
-  echo "      macOS:  brew install hudochenkov/sshpass/sshpass"
+# ── Check sshpass ────────────────────────────────────────────────────────────
+if ! command -v sshpass &>/dev/null; then
+  echo "❌  sshpass not found.  Install: brew install hudochenkov/sshpass/sshpass"
   exit 1
 fi
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-ssh_run() {
-  sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no \
-    "${REMOTE_USER}@${SERVER_IP}" "$@"
-}
-rsync_run() {
-  sshpass -p "$SSH_PASS" rsync -az --delete \
-    -e "ssh -o StrictHostKeyChecking=no" "$@"
-}
-
+# ── Auth ─────────────────────────────────────────────────────────────────────
+read -rsp "SSH password for ${REMOTE_USER}@${SERVER_IP}: " SSH_PASS
 echo ""
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+ssh_run()   { sshpass -p "$SSH_PASS" ssh  -o StrictHostKeyChecking=no "${REMOTE_USER}@${SERVER_IP}" "$@"; }
+rsync_run() { sshpass -p "$SSH_PASS" rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" "$@"; }
+scp_run()   { sshpass -p "$SSH_PASS" scp  -o StrictHostKeyChecking=no "$@"; }
+
+# ════════════════════════════════════════════════════════════════
+#  FIRST-TIME SETUP  (./deploy.sh --setup)
+# ════════════════════════════════════════════════════════════════
 if $SETUP_MODE; then
+  echo ""
   echo "═══════════════════════════════════════════════════════"
   echo "  🔧  FIRST-TIME SETUP  →  ${REMOTE_USER}@${SERVER_IP}"
   echo "═══════════════════════════════════════════════════════"
-else
-  echo "═══════════════════════════════════════════════════════"
-  echo "  🚀  REDEPLOY  →  ${REMOTE_USER}@${SERVER_IP}"
-  echo "═══════════════════════════════════════════════════════"
-fi
-
-# ════════════════════════════════════════════════════════
-#  SETUP STEPS (first time only — ./deploy.sh --setup)
-# ════════════════════════════════════════════════════════
-if $SETUP_MODE; then
 
   echo ""
-  echo "▶  [setup]  Installing Node.js 20, Nginx, PM2…"
+  echo "▶  Installing Node.js 20, Nginx, PM2…"
   ssh_run bash <<'REMOTE'
 set -e
-if ! command -v node &>/dev/null; then
+command -v node &>/dev/null || {
   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt-get install -y nodejs
-fi
-if ! command -v nginx &>/dev/null; then
-  sudo apt-get install -y nginx
-fi
-if ! command -v pm2 &>/dev/null; then
-  sudo npm install -g pm2
-fi
+}
+command -v nginx &>/dev/null || sudo apt-get install -y nginx
+command -v pm2   &>/dev/null || sudo npm install -g pm2
 REMOTE
   echo "   ✓ done"
 
   echo ""
-  echo "▶  [setup]  Configuring Nginx for ${DOMAIN}…"
+  echo "▶  Configuring Nginx reverse proxy for ${DOMAIN}…"
   ssh_run bash <<REMOTE
 sudo tee /etc/nginx/sites-available/${DOMAIN} > /dev/null <<'NGINX'
 server {
     listen 80;
     server_name ${DOMAIN};
-
     location / {
         proxy_pass         http://localhost:${APP_PORT};
         proxy_http_version 1.1;
@@ -98,58 +77,69 @@ server {
     }
 }
 NGINX
-sudo ln -sf /etc/nginx/sites-available/${DOMAIN} \
-            /etc/nginx/sites-enabled/${DOMAIN}
+sudo ln -sf /etc/nginx/sites-available/${DOMAIN} /etc/nginx/sites-enabled/${DOMAIN}
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 REMOTE
   echo "   ✓ done"
 
   echo ""
-  read -rp "  Install SSL cert with Certbot? (DNS must point to ${SERVER_IP}) [y/N]: " DO_SSL
+  read -rp "Install SSL cert with Certbot? (DNS must point to ${SERVER_IP}) [y/N]: " DO_SSL
   if [[ "$DO_SSL" =~ ^[Yy]$ ]]; then
     ssh_run bash <<REMOTE
-if ! command -v certbot &>/dev/null; then
-  sudo apt-get install -y certbot python3-certbot-nginx
-fi
+command -v certbot &>/dev/null || sudo apt-get install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos \
   -m admin@agentemp.com --redirect
 REMOTE
     echo "   ✓ SSL installed"
   else
-    echo "   ↷ SSL skipped — run later:  sudo certbot --nginx -d ${DOMAIN}"
+    echo "   ↷ SSL skipped — run later: sudo certbot --nginx -d ${DOMAIN}"
   fi
 
-fi   # end SETUP_MODE
+  echo ""
+  echo "   Setup complete. Run ./deploy.sh to deploy the code."
+  exit 0
+fi
 
-# ════════════════════════════════════════════════════════
-#  DEPLOY STEPS (always run)
-# ════════════════════════════════════════════════════════
-
+# ════════════════════════════════════════════════════════════════
+#  REGULAR DEPLOY
+# ════════════════════════════════════════════════════════════════
 echo ""
-echo "▶  1/3  Uploading files…"
+echo "═══════════════════════════════════════════════════════"
+echo "  🚀  DEPLOY  →  ${REMOTE_USER}@${SERVER_IP}"
+echo "═══════════════════════════════════════════════════════"
+
+# 1. Ensure remote dir exists
 ssh_run "mkdir -p ${REMOTE_DIR}"
+
+# 2. Upload code (exclude node_modules and .git)
+echo ""
+echo "▶  1/4  Uploading files…"
 rsync_run \
   --exclude='node_modules/' \
   --exclude='.git/' \
   ./ "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/"
 echo "   ✓ done"
 
+# 3. Copy .env files
 echo ""
-echo "▶  2/3  Installing dependencies…"
+echo "▶  2/4  Copying .env files…"
+for envfile in .env .env.production .env.local; do
+  if [ -f "$envfile" ]; then
+    scp_run "$envfile" "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/$envfile"
+    echo "   ✓ $envfile copied"
+  fi
+done
+
+# 4. Install dependencies
+echo ""
+echo "▶  3/4  Installing dependencies…"
 ssh_run "cd ${REMOTE_DIR} && npm install --omit=dev"
 echo "   ✓ done"
 
+# 5. Restart or start PM2
 echo ""
-echo "▶  3/3  Copying .env & restarting PM2…"
-if [ -f ".env" ]; then
-  sshpass -p "$SSH_PASS" scp -o StrictHostKeyChecking=no \
-    .env "${REMOTE_USER}@${SERVER_IP}:${REMOTE_DIR}/.env"
-  echo "   ✓ .env copied"
-else
-  echo "   ⚠️  No local .env found"
-fi
-
+echo "▶  4/4  Restarting PM2 (${PM2_NAME})…"
 ssh_run bash <<REMOTE
 cd ${REMOTE_DIR}
 if pm2 list | grep -q "${PM2_NAME}"; then
@@ -165,11 +155,8 @@ echo "   ✓ done"
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════"
-echo "  ✅  Done!"
+echo "  ✅  Deploy complete!"
 echo ""
-echo "  Health:  curl http://${SERVER_IP}:${APP_PORT}/health"
-if $SETUP_MODE; then
-  echo "  Domain:  curl https://${DOMAIN}/health"
-fi
+echo "  Health:  curl https://${DOMAIN}/health"
 echo "  Logs:    ssh ${REMOTE_USER}@${SERVER_IP} 'pm2 logs ${PM2_NAME}'"
 echo "═══════════════════════════════════════════════════════"
