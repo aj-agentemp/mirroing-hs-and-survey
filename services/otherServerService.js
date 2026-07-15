@@ -3,20 +3,16 @@
  * ───────────────────────────────────────────────────────
  * All outbound HTTP calls to the external mirror/automation server.
  *
- * URLs and API keys are fully controlled via .env:
+ * URLs are fully controlled via .env:
  *   OTHER_SERVER_BASE_URL
  *   OTHER_SERVER_SESSION_INIT_PATH
  *   OTHER_SERVER_OTP_SUBMIT_PATH
- *   OTHER_SERVER_API_KEY
- *   OTHER_SERVER_API_KEY_HEADER
  */
 
 const axios = require('axios');
 
 function buildClient() {
-  const baseURL  = process.env.OTHER_SERVER_BASE_URL;
-  const apiKey   = process.env.OTHER_SERVER_API_KEY;
-  const keyHeader = process.env.OTHER_SERVER_API_KEY_HEADER || 'x-api-key';
+  const baseURL = process.env.OTHER_SERVER_BASE_URL;
 
   if (!baseURL) {
     throw new Error('OTHER_SERVER_BASE_URL is not configured in .env');
@@ -26,8 +22,7 @@ function buildClient() {
     baseURL,
     timeout: 15000,
     headers: {
-      'Content-Type':  'application/json',
-      [keyHeader]:     apiKey,
+      'Content-Type': 'application/json',
     },
   });
 }
