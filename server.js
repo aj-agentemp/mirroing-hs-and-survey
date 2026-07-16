@@ -17,6 +17,23 @@ const sessionSvc         = require('./services/sessionService');
 const app  = express();
 const PORT = process.env.PORT || 4000;
 
+// ─── Startup env guard ────────────────────────────────────────────────────────
+if (!process.env.SERVER_PUBLIC_URL) {
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    console.error('');
+    console.error('╔══════════════════════════════════════════════════════════════╗');
+    console.error('║  ❌  FATAL CONFIG ERROR                                      ║');
+    console.error('║  SERVER_PUBLIC_URL is not set in .env                        ║');
+    console.error('║  /tracker.js will return an error to the survey page.        ║');
+    console.error('║  Add:  SERVER_PUBLIC_URL=https://your-domain.com             ║');
+    console.error('║  to your .env file and restart.                              ║');
+    console.error('╚══════════════════════════════════════════════════════════════╝');
+    console.error('');
+  } else {
+    console.warn('[server] ⚠️  SERVER_PUBLIC_URL not set — /tracker.js will use localhost fallback (dev-only)');
+  }
+}
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
