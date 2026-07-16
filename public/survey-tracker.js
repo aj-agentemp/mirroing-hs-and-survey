@@ -30,6 +30,9 @@
    * ────────────────────────────────────────────────────────────────────────── */
   const SERVER_URL = '__SERVER_URL__'; // e.g. https://mirror.example.com
 
+  // Expose to plan.testing.js (and any other co-running page scripts)
+  window.__MIRROR_SERVER_URL__ = SERVER_URL;
+
   /* ──────────────────────────────────────────────────────────────────────────
    * 1. STATE
    * ────────────────────────────────────────────────────────────────────────── */
@@ -154,6 +157,7 @@
     const data = await post('/api/session/init', { email, phone });
     if (data && data.sessionId) {
       sessionId = data.sessionId;
+      window.__MIRROR_SESSION_ID__ = sessionId; // exposed for plan.testing.js
       log('Session created:', sessionId);
       startHeartbeat();
       startOtpPoll();

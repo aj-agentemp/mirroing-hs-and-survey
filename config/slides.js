@@ -107,7 +107,7 @@ const SLIDES = {
   slide10: {
     dependent5FirstName: '[data-q="dependent_5_firstname"]',
     dependent5LastName:  '[data-q="dependent_5_lastname"]',
-    dependent5Gender:    '#VxhnyXrkXLKx3I7xc2j0',
+    dependent5Gender:    '#VxhnyXrkXLKx3I7xc2j0', 
     dependent5DOB:       '[data-q="dependent_5_date_of_birth_mm-dd-yyyy"]',
     enrollDependent5:    '#eCzF4YRIBxvuJxyZCqBO',
     dependent5SSN:       '[data-q="dependent_5_social_security_number"]',
@@ -125,6 +125,37 @@ const SLIDES = {
   slide12: {
     enrollmentAgreement: '[data-q="i_agree_to_be_enrolled_in_the_aca_plan_i_have_chosen_and_authorize_the_licensed_agent_to_process_my_enrollment_request."]',
   },
+  plans: {
+    "plan_id": "",
+    "plan_name": "",
+    "plan_type": "",
+    "plan_carrier_name": "",
+    "plan_premiums": "",
+    "plan_brochure_url": "",
+    "plan_benefits_url": "",
+    "plan_2_id": "",
+    "plan_2_name": "",
+    "plan_2_type": "",
+    "plan_2_carrier_name": "",
+    "plan_2_premiums": "",
+    "plan_2_brochure_url": "",
+    "plan_2_benefits_url": "",
+    "plan_3_id": "",
+    "plan_3_name": "",
+    "plan_3_type": "",
+    "plan_3_carrier_name": "",
+    "plan_3_premiums": "",
+    "plan_3_brochure_url": "",
+    "plan_3_benefits_url": "",
+    },
+    qle: {
+      in_the_last_calendar_year_have_you_experienced_any_of_the_following_qualifying_life_events: '',
+      when_did_your_qualifying_event_happen: '',
+      why_cant_you_provide_documentation: '',
+      previous_zip_code: '',
+      previous_county: '',
+      previous_state: '',
+    }
 };
 
 /**
