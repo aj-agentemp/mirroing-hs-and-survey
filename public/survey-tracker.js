@@ -215,6 +215,14 @@
     const data = await get(`/api/session/${sessionId}/otp-status`);
     if (!data || !data.otp) return;
 
+    // Stop polling for terminal sessions — OTP will never be triggered again
+    const TERMINAL_STATES = ['completed', 'exited', 'submitted'];
+    if (data.sessionStatus && TERMINAL_STATES.includes(data.sessionStatus)) {
+      log('Session is terminal (' + data.sessionStatus + ') — stopping OTP poll');
+      stopOtpPoll();
+      return;
+    }
+
     if (data.otp.status === 'pending' && !otpModalOpen) {
       log('OTP triggered by server — showing modal');
       showOtpModal({ email: data.email, phone: data.phone });

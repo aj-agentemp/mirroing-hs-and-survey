@@ -221,10 +221,11 @@ router.get('/:sessionId/otp-status', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
     return res.json({
-      sessionId: session.sessionId,
-      otp:       session.otp,
-      email:     session.email,
-      phone:     session.phone,
+      sessionId:     session.sessionId,
+      otp:           session.otp,
+      email:         session.email,
+      phone:         session.phone,
+      sessionStatus: session.status,  // 'active' | 'completed' | 'exited'
     });
   } catch (err) {
     console.error('[GET /api/session/:sessionId/otp-status]', err);
