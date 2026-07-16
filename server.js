@@ -41,14 +41,35 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Domains that GHL serves surveys from — wildcard subdomains are allowed
+const GHL_ALLOWED_DOMAINS = [
+  'apisystem.tech',         // e.g. link.apisystem.tech
+  'msgsndr.com',            // e.g. link.msgsndr.com
+  'leadconnectorhq.com',    // e.g. api.leadconnectorhq.com
+  'gohighlevel.com',        // direct GHL domains
+];
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // server-to-server, curl, Postman
+  if (allowedOrigins.length === 0) return true; // no restrictions configured
+  if (allowedOrigins.includes(origin)) return true; // exact match in .env list
+
+  // Wildcard-match any subdomain of known GHL domains
+  try {
+    const host = new URL(origin).hostname;
+    if (GHL_ALLOWED_DOMAINS.some((d) => host === d || host.endsWith('.' + d))) {
+      return true;
+    }
+  } catch (_) {}
+
+  return false;
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (server-to-server, curl, Postman)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+      if (isOriginAllowed(origin)) return callback(null, true);
+      console.warn(`[CORS] Blocked origin: ${origin}`);
       return callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     methods:     ['GET', 'POST', 'OPTIONS'],
